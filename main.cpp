@@ -33,156 +33,6 @@ using isize = std::make_signed_t<usize>;
 using f32 = float;
 using f64 = double;
 
-constexpr usize WIDTH = 28;
-constexpr usize HEIGHT = 28;
-
-
-// credit: me
-// https://github.com/chopingu/hajar/tree/main/src/neural_net_testing
-namespace gya {
-template<class T, usize... sizes>
-class layer_array {
-private:
-    constexpr static auto layer_sizes = std::array{sizes...};
-
-    constexpr static auto indices = [] {
-        std::array<usize, sizeof...(sizes)> arr{};
-        for (usize i = 0, sum = 0; i < arr.size(); ++i) {
-            arr[i] = sum;
-            sum += std::array{sizes...}[i];
-        }
-        return arr;
-    }();
-
-public:
-    std::array<T, (sizes + ...)> m_data{};
-
-    constexpr std::span<T> operator[](usize idx) {
-        return std::span<T>(m_data.data() + indices[idx], m_data.data() + indices[idx] + layer_sizes[idx]);
-    }
-
-    constexpr std::span<T const> operator[](usize idx) const {
-        return std::span<T const>(m_data.data() + indices[idx], m_data.data() + indices[idx] + layer_sizes[idx]);
-    }
-
-    constexpr usize size() const {
-        return sizeof...(sizes);
-    }
-
-    constexpr std::span<T> front() {
-        return operator[](0);
-    }
-
-    constexpr std::span<T const> front() const {
-        return operator[](0);
-    }
-
-    constexpr std::span<T> back() {
-        return operator[](size() - 1);
-    }
-
-    constexpr std::span<T const> back() const {
-        return operator[](size() - 1);
-    }
-
-    constexpr auto fill(T const &value) {
-        m_data.fill(value);
-    }
-
-    constexpr auto data() {
-        return m_data.data();
-    }
-
-    constexpr auto data() const {
-        return m_data.data();
-    }
-};
-template<class T, usize... sizes>
-class weight_array {
-    template<class G>
-    struct matrix_ref {
-        friend weight_array;
-
-    private:
-        G *m_data;
-        usize m_subarray_len;
-
-        // private to disallow creating a matrix_ref outside of weight_array
-        constexpr matrix_ref(G *data, usize subarray_len) : m_data{data}, m_subarray_len{subarray_len} {}
-
-    public:
-        constexpr std::span<G> operator[](usize idx) {
-            return std::span<G>{m_data + idx * m_subarray_len, m_data + (idx + 1) * m_subarray_len};
-        }
-
-        constexpr std::span<G const> operator[](usize idx) const {
-            return std::span<G const>{m_data + idx * m_subarray_len, m_data + (idx + 1) * m_subarray_len};
-        }
-
-        constexpr usize size() const {
-            return m_subarray_len;
-        }
-    };
-
-private:
-    constexpr static auto layer_sizes = std::array{sizes...};
-
-    constexpr static auto indices = [] {
-        std::array<usize, sizeof...(sizes)> arr{};
-        usize sum = 0;
-        for (usize i = 0; i < sizeof...(sizes) - 1; ++i) {
-            arr[i] = sum;
-            sum += layer_sizes[i] * layer_sizes[i + 1];
-        }
-        arr.back() = sum;
-        return arr;
-    }();
-
-public:
-    std::array<T, indices.back()> m_data{};
-
-    constexpr matrix_ref<T> operator[](usize idx) {
-        return matrix_ref<T>{m_data.data() + indices[idx], layer_sizes[idx + 1]};
-    }
-
-    constexpr matrix_ref<T const> operator[](usize idx) const {
-        return matrix_ref<T const>{m_data.data() + indices[idx], layer_sizes[idx + 1]};
-    }
-
-    constexpr usize size() const {
-        return sizeof...(sizes);
-    }
-
-    constexpr auto front() {
-        return operator[](0);
-    }
-
-    constexpr auto front() const {
-        return operator[](0);
-    }
-
-    constexpr auto back() {
-        return operator[](size() - 1);
-    }
-
-    constexpr auto back() const {
-        return operator[](size() - 1);
-    }
-
-    constexpr auto fill(T const &value) {
-        m_data.fill(value);
-    }
-
-    constexpr auto data() {
-        return m_data.data();
-    }
-
-    constexpr auto data() const {
-        return m_data.data();
-    }
-};
-} // namespace gya
-using namespace gya;
 
 f64 lrelu(f64 x) {
     if (x < 0)
@@ -198,199 +48,248 @@ f64 lrelu_d(f64 x) {
         return 1;
 }
 
-f64 sigmoid(f64 x) {
-    return 1.0 / (1.0 + std::exp(-x));
+void lrelu(std::span<f64> s, std::span<f64> d) {
+    for (usize i = 0; i < s.size(); ++i)
+        d[i] = lrelu(s[i]);
 }
 
-f64 sigmoid_d(f64 x) {
-    return sigmoid(x) * (1 - sigmoid(x));
+void lrelu_d(std::span<f64> s, std::span<f64> d) {
+    for (usize i = 0; i < s.size(); ++i)
+        d[i] = lrelu_d(s[i]);
 }
 
-using layer_array_t = layer_array<f64, WIDTH * HEIGHT, 1024, 128, 32, 10>;
-using weight_array_t = weight_array<f64, WIDTH * HEIGHT, 1024, 128, 32, 10>;
+void softmax(std::span<f64> s, std::span<f64> d) {
+    f64 sum = 0;
 
-layer_array_t network_values;
-weight_array_t weights;
-layer_array_t biases;
+    for (usize i = 0; i < s.size(); ++i) {
+        d[i] = std::exp(s[i]);
+        sum += std::exp(s[i]);
+    }
 
-std::mutex summation_mutex;
-weight_array_t weights_derivative_accum;
-layer_array_t biases_derivative_accum;
+    for (usize i = 0; i < s.size(); ++i) {
+        d[i] /= sum;
+    }
+}
+
+void lrelu_d(std::span<f64> s) {
+    for (auto &i: s) i = lrelu(i);
+}
+
+
+struct network {
+    usize num_layers, num_batches;
+    std::vector<usize> layer_sizes;
+    std::vector<std::vector<f64>> outputs;
+    std::vector<std::vector<f64>> activations;
+    std::vector<std::vector<f64>> costs;
+    std::vector<std::vector<std::vector<f64>>> weights;
+    std::vector<std::vector<std::vector<f64>>> gradients;
+
+    network(std::span<usize> layer_sizes_inp) : num_batches{},
+                                                num_layers{layer_sizes_inp.size()},
+                                                layer_sizes(layer_sizes_inp.size()),
+                                                outputs(layer_sizes_inp.size()),
+                                                activations(layer_sizes_inp.size()),
+                                                costs(layer_sizes_inp.size()),
+                                                weights(layer_sizes_inp.size()),
+                                                gradients(layer_sizes_inp.size()) {
+
+
+        for (usize i = 0; i < num_layers; ++i) {
+            layer_sizes[i] = layer_sizes_inp[i] + 1;
+        }
+
+        for (usize i = 0; i < num_layers; ++i) {
+            outputs[i] = std::vector<f64>(layer_sizes[i]);
+            activations[i] = std::vector<f64>(layer_sizes[i]);
+            costs[i] = std::vector<f64>(layer_sizes[i]);
+        }
+
+        for (usize i = 1; i < num_layers; ++i) {
+            weights[i] = std::vector<std::vector<f64>>(layer_sizes[i], std::vector<f64>(layer_sizes[i - 1]));
+            gradients[i] = std::vector<std::vector<f64>>(layer_sizes[i], std::vector<f64>(layer_sizes[i - 1]));
+        }
+    }
+
+    void randomize_weights(auto &uniform) {
+        for (usize layer = 1; layer < num_layers; ++layer) {
+            for (usize i = 0; i < layer_sizes[layer]; ++i) {
+                for (usize j = 0; j < layer_sizes[layer - 1]; ++j) {
+                    weights[layer][i][j] = std::uniform_real_distribution<f64>{-0.5, 0.5}(uniform);
+                }
+            }
+        }
+    }
+
+    void forward(std::span<f64> inp) {
+        for (usize i = 0; i < inp.size(); ++i)
+            outputs[0][i] = inp[i];
+
+        for (usize layer = 1; layer < num_layers; ++layer) {
+            std::span inp = outputs[layer - 1];
+            inp[0] = 1; // bias
+            std::span weight = weights[layer];
+            std::span act = activations[layer];
+            std::span out = outputs[layer];
+
+            for (usize i = 0; i < layer_sizes[layer]; ++i)
+                act[i] = 0;
+
+            for (usize i = 0; i < layer_sizes[layer]; ++i)
+                for (usize j = 0; j < layer_sizes[layer - 1]; ++j)
+                    act[i] += weight[i][j] * inp[j];
+
+            if (layer + 1 < num_layers)
+                lrelu(act, out);
+            else
+                softmax(act, out);
+        }
+    }
+
+    void backward(std::span<f64> desired) {
+        // last layer
+        costs.back()[0] = 0;
+        for (usize i = 1; i < layer_sizes.back(); ++i)
+            costs.back()[i] = outputs.back()[i] - desired[i - 1];
+
+        // all other layers
+        for (usize layer = num_layers - 1; layer-- > 0;) {
+            std::span next_cost = costs[layer + 1];
+            std::span next_weight = weights[layer + 1];
+            std::span cur_cost = costs[layer];
+            std::span cur_act = activations[layer];
+
+            std::vector<f64> derivatives(layer_sizes[layer]);
+            lrelu_d(cur_act, derivatives);
+
+            for (usize i = 0; i < layer_sizes[layer]; ++i) {
+                for (usize j = 0; j < layer_sizes[layer + 1]; ++j) {
+                    cur_cost[i] += derivatives[i] * next_cost[j] * next_weight[j][i];
+                }
+            }
+        }
+
+        for (usize layer = 1; layer < num_layers; ++layer) {
+            for (usize i = 0; i < layer_sizes[layer]; ++i) {
+                for (usize j = 0; j < layer_sizes[layer - 1]; ++j) {
+                    gradients[layer][i][j] += outputs[layer - 1][j] * costs[layer][i];
+                }
+            }
+        }
+        num_batches += 1;
+    }
+
+    void apply_gradients(f64 learning_rate) {
+        auto fix_nan_inf = [](f64 &x) {
+            if (std::isnan(x) || std::isinf(x)) x = 0;
+        };
+        for (usize layer = 1; layer < num_layers; ++layer) {
+            for (usize i = 0; i < layer_sizes[layer]; ++i) {
+                for (usize j = 0; j < layer_sizes[layer - 1]; ++j) {
+                    fix_nan_inf(gradients[layer][i][j]);
+                    weights[layer][i][j] -= std::clamp<f64>(gradients[layer][i][j] * learning_rate / num_batches, -1, 1);
+                    fix_nan_inf(weights[layer][i][j]);
+                    gradients[layer][i][j] = 0;
+                }
+            }
+        }
+        num_batches = 0;
+    }
+};
 
 int main() {
-    for (auto &i: weights.m_data) i = 0.1 + (rand() * (1. / RAND_MAX) - .5) * 0.02;
-    for (auto &i: biases.m_data) i = 0.1 + (rand() * (1. / RAND_MAX) - .5) * 0.02;
+    std::mt19937_64 mt{std::random_device{}()};
 
     std::vector<usize> backing_permutation(dataset.training_images.size());
     std::iota(std::begin(backing_permutation), std::end(backing_permutation), 0);
 
-    std::mt19937_64 mt{std::random_device{}()};
-    f64 learning_rate = 0.01;
-    auto forward_prop = [&](auto &img) {
-        for (usize i = 0; i < network_values[0].size(); ++i) {
-            network_values[0][i] = img[i] / 255.0;
-        }
+    std::vector<usize> layer_sizes = {28 * 28, 16, 10};
+    network best(layer_sizes);
+    usize best_num_correct = -1;
+    network net(layer_sizes);
 
-        {
-            for (usize layer = 1; layer + 1 < network_values.size(); ++layer) {
-                for (usize i = 0; i < network_values[layer].size(); ++i) {
-                    auto sum = biases[layer][i];
-                    for (usize j = 0; j < network_values[layer - 1].size(); ++j) {
-                        sum += weights[layer - 1][j][i] * network_values[layer - 1][j];
-                    }
-                    network_values[layer][i] = lrelu(sum);
+    if (false) {
+        std::ifstream dat("best_network");
+        for (auto &vv: std::span(net.weights).subspan(1)) {
+            for (auto &v: vv) {
+                for (auto &i: v) {
+                    dat >> i;
                 }
             }
-            const auto layer = network_values.size() - 1;
-            for (usize i = 0; i < network_values[layer].size(); ++i) {
-                auto sum = biases[layer][i];
-                for (usize j = 0; j < network_values[layer - 1].size(); ++j) {
-                    sum += weights[layer - 1][j][i] * network_values[layer - 1][j];
-                }
-                network_values[layer][i] = sigmoid(sum);
-            }
         }
-    };
-    constexpr auto num_threads = 256;
-    std::vector<std::function<void(void)>> tasks[num_threads];
-    std::jthread threads[num_threads];
-    std::atomic<bool> do_work[num_threads];
-    std::atomic<usize> not_done_threads = 0;
-    std::atomic<bool> program_is_done = false;
-
-    auto do_tasks = [&]() {
-        for (auto &i: do_work) i = true;
-        not_done_threads = num_threads;
-        while (not_done_threads > 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-    };
-
-    auto add_task = [&, i = 0](auto &&task) mutable {
-        tasks[i].push_back({std::move(task)});
-        i = (i + 1) % num_threads;
-    };
-
-    for (usize i = 0; i < num_threads; ++i) {
-        new (&threads[i]) std::jthread{[&, i]() {
-            while (!program_is_done) {
-                if (!do_work[i]) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                    std::this_thread::yield();
-                    continue;
-                } else {
-                    while (!tasks[i].empty()) {
-                        tasks[i].back()();
-                        tasks[i].pop_back();
-                    }
-                    --not_done_threads;
-                    do_work[i] = false;
-                }
-            }
-        }};
+    } else {
+        net.randomize_weights(mt);
     }
+    std::vector<usize> full_permutation(dataset.training_images.size());
+    std::iota(std::begin(full_permutation), std::end(full_permutation), 0);
 
-    for (usize epoch = 0; epoch <= 1'000'000; ++epoch) {
-        std::shuffle(std::begin(backing_permutation), std::end(backing_permutation), mt);
+    usize images_per_epoch = 1024;
 
-        std::span permutation = std::span(backing_permutation).subspan(0, 1000);
+    for (usize epoch = 0; epoch < 100'000; ++epoch) {
+        std::shuffle(std::begin(full_permutation), std::end(full_permutation), mt);
 
+        std::span permutation = std::span{full_permutation}.subspan(0, images_per_epoch);
 
+        f64 loss = 0;
+        usize num_correct = 0;
         for (auto idx: permutation) {
-            add_task([&, idx] {
-                auto &img = dataset.training_images[idx];
-                auto &label = dataset.training_labels[idx];
-                forward_prop(img);
-                { // backward prop
+            auto &img = dataset.training_images[idx];
+            auto &label = dataset.training_labels[idx];
 
-                    layer_array_t correct_vals{};
+            std::array<f64, 10> target{};
+            target[label] = 1;
 
-                    std::span correct_output = correct_vals.back();
-                    correct_output[label] = 1;
-                    std::unique_ptr backing = std::make_unique<weight_array_t>();
-                    weight_array_t &weight_derivatives = *backing;
-                    for (auto &i: weight_derivatives.m_data) i = 0;
-                    layer_array_t bias_derivatives{};
+            std::array<f64, 28 * 28> input;
+            for (usize i = 0; i < 28 * 28; ++i)
+                input[i] = img[i] / 255.0;
+            net.forward(input);
+            net.backward(target);
 
-                    const std::span output{network_values.back()};
-                    const usize num_layers = network_values.size();
+            usize highest = 0;
 
-                    // process last layer
-                    for (usize node = 0; node < output.size(); ++node) {
-                        bias_derivatives.back()[node] =
-                                sigmoid_d(output[node]) * (output[node] - correct_output[node]);
-                    }
-
-                    // process all layers between last and first layer (exclusive)
-                    for (usize layer = num_layers - 2; layer > 0; --layer) {
-                        for (usize node = 0; node < network_values[layer].size(); ++node) {
-                            f64 sum = 0;
-                            for (usize next_node = 0; next_node < network_values[layer + 1].size(); ++next_node) {
-                                const f64 weight_derivative = network_values[layer][node] * bias_derivatives[layer + 1][next_node];
-                                sum += weight_derivative;
-                                weight_derivatives[layer][node][next_node] = weight_derivative;
-                            }
-                            const f64 bias_derivative = lrelu_d(network_values[layer][node]) * sum;
-                            bias_derivatives[layer][node] = bias_derivative;
-                        }
-                    }
-
-                    // process first layer
-                    for (usize node = 0; node < network_values[0].size(); ++node) {
-                        for (usize next_node = 0; next_node < network_values[1].size(); ++next_node) {
-                            const f64 weight_derivative = network_values[0][node] * bias_derivatives[1][next_node];
-                            weight_derivatives[0][node][next_node] = weight_derivative;
-                        }
-                    }
-
-                    std::scoped_lock lock(summation_mutex);
-                    for (usize i = 0; i < weights.m_data.size(); ++i)
-                        weights_derivative_accum.m_data[i] += (1.0 / permutation.size()) * weight_derivatives.m_data[i];
-                    for (usize i = 0; i < biases.m_data.size(); ++i)
-                        biases_derivative_accum.m_data[i] += (1.0 / permutation.size()) * bias_derivatives.m_data[i];
+            for (usize i = 0; i < 10; ++i) {
+                if (net.outputs.back()[i] > net.outputs.back()[highest]) {
+                    highest = i;
                 }
-            });
-        }
-
-        do_tasks();
-
-        if (epoch % 100 == 0) {
-            for (usize i = 0; i < weights.m_data.size(); ++i)
-                weights.m_data[i] -= std::clamp<f64>(learning_rate * weights_derivative_accum.m_data[i], -1, 1);
-            for (usize i = 0; i < biases.m_data.size(); ++i)
-                biases.m_data[i] -= std::clamp<f64>(learning_rate * biases_derivative_accum.m_data[i], -1, 1);
-            std::cerr.precision();
-
-            std::atomic<f64> sum_error = 0;
-            std::atomic<usize> num_correct = 0;
-            const usize num_test_images = 1000;
-            for (usize i = 0, iters = num_test_images; iters-- > 0; i = (i + 17) % dataset.test_images.size()) {
-                add_task([&, i] {
-                    forward_prop(dataset.test_images[i]);
-                    auto label = dataset.test_labels[i];
-                    std::array<f64, 10> correct{};
-                    correct[label] = 1.0;
-                    usize biggest = 0;
-                    for (usize j = 0; j < 10; ++j) {
-                        sum_error += std::pow(network_values.back()[j] - correct[j], 2);
-                        if (network_values.back()[j] > network_values.back()[biggest]) {
-                            biggest = j;
-                        }
-                    }
-                    assert(label < 10);
-                    assert(biggest < 10);
-                    num_correct += biggest == label;
-                });
+                loss -= target[i] * std::log(net.outputs.back()[i]);
             }
-            do_tasks();
-
-            std::cerr << std::setprecision(4) << std::fixed;
-            std::cerr << "loss: " << std::setw(8) << (sum_error / num_test_images) / network_values.back().size() << "\t\t";
-            std::cerr << "accuracy: " << std::setw(8) << num_correct * 100.0 / num_test_images << "%\t\t";
-            std::cerr << "learning rate: " << std::setw(8) << learning_rate << ' ';
-            std::cerr << std::endl;
-            learning_rate *= 0.99;
+            num_correct += highest == label;
         }
+        if (num_correct > best_num_correct) {
+            best = net;
+            best_num_correct = num_correct;
+
+            std::ofstream outfile("best_network");
+            outfile.precision(10);
+            for (auto &vv: std::span(best.weights).subspan(1)) {
+                for (auto &v: vv) {
+                    for (auto &i: v) {
+                        outfile << i << ' ';
+                    }
+                }
+            }
+        }
+
+        // https://www.jonathan-petitcolas.com/2017/12/28/converting-image-to-ascii-art.html
+        char lightness[] = "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,\"^`'.                 ";
+        for (usize i = 0; i < 28; ++i) {
+            for (usize j = 0; j < 28; ++j) {
+                std::cerr << lightness[dataset.training_images[permutation[0]][i * 28 + j] * 80 / 255];
+            }
+            std::cerr << '\n';
+        }
+        std::array<f64, 28 * 28> input;
+        for (usize i = 0; i < 28 * 28; ++i)
+            input[i] = dataset.training_images[permutation[0]][i] / 255.0;
+        net.forward(input);
+        auto choice = 0;
+        for (usize i = 0; i < 10; ++i) {
+            std::cerr << net.outputs.back()[i] << ' ';
+            if (net.outputs.back()[i] > net.outputs.back()[choice]) choice = i;
+        }
+        std::cerr << "\nnetwork choice: " << choice << " with probability: " << net.outputs.back()[choice] * 100 << "%\n";
+        std::cerr << "correct:" << (int) dataset.training_labels[permutation[0]] << '\n';
+        net.apply_gradients(0.01);
+        std::cerr << "loss=" << loss / images_per_epoch << " accuracy=" << num_correct * 1.0 / images_per_epoch << "\n";
     }
-    program_is_done = true;
 }
